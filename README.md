@@ -1,7 +1,7 @@
 # Data Preparation
 
-Create a folder called 'data'
-Create a folder called 'final_dataset'
+- Create a folder called 'data'
+- Create a folder called 'final_dataset'
 
 Download the MS-COCO [Training (13GB)](http://images.cocodataset.org/zips/train2014.zip) and [Validation (6GB)](http://images.cocodataset.org/zips/val2014.zip) images. Also download [Andrej Karpathy's training, validation, and test splits](http://cs.stanford.edu/people/karpathy/deepimagesent/caption_datasets.zip). This zip file contains the captions. Unzip all files and place in 'data' folder. 
 
@@ -26,3 +26,7 @@ To **train the model from scratch**, simply run this file:
 
 The validation set BLEU-4 score calculated at the end of every training epoch is one where the decoder uses teacher forcing. To calculate the validation set score without teacher forcing, which is the correct way of doing it, please run: 
  `python eval.py`
+ 
+ # References
+ Code adapted from https://github.com/sgrvinod/a-PyTorch-Tutorial-to-Image-Captioning
+ 
