@@ -1,10 +1,9 @@
 import torch
 from torch import nn
 import torchvision
-import numpy as np
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-torch.set_printoptions(threshold=5000)
+
 
 class Encoder(nn.Module):
     """
@@ -29,7 +28,6 @@ class Encoder(nn.Module):
     def forward(self, images):
         """
         Forward propagation.
-
         :param images: images, a tensor of dimensions (batch_size, 3, image_size, image_size)
         :return: encoded images
         """
@@ -41,7 +39,6 @@ class Encoder(nn.Module):
     def fine_tune(self, fine_tune=True):
         """
         Allow or prevent the computation of gradients for convolutional blocks 2 through 4 of the encoder.
-
         :param fine_tune: Allow?
         """
         for p in self.resnet.parameters():
@@ -73,7 +70,6 @@ class Attention(nn.Module):
     def forward(self, encoder_out, decoder_hidden):
         """
         Forward propagation.
-
         :param encoder_out: encoded images, a tensor of dimension (batch_size, num_pixels, encoder_dim)
         :param decoder_hidden: previous decoder output, a tensor of dimension (batch_size, decoder_dim)
         :return: attention weighted encoding, weights
@@ -119,8 +115,7 @@ class DecoderWithAttention(nn.Module):
         self.init_c = nn.Linear(encoder_dim, decoder_dim)  # linear layer to find initial cell state of LSTMCell
         self.f_beta = nn.Linear(decoder_dim, encoder_dim)  # linear layer to create a sigmoid-activated gate
         self.sigmoid = nn.Sigmoid()
-        self.fc = nn.Linear(decoder_dim + decoder_dim, vocab_size)  # linear layer to find scores over vocabulary
-        self.fc1 = nn.Linear(decoder_dim, vocab_size)
+        self.fc = nn.Linear(decoder_dim, vocab_size)  # linear layer to find scores over vocabulary
         self.init_weights()  # initialize some layers with the uniform distribution
 
     def init_weights(self):
@@ -130,13 +125,10 @@ class DecoderWithAttention(nn.Module):
         self.embedding.weight.data.uniform_(-0.1, 0.1)
         self.fc.bias.data.fill_(0)
         self.fc.weight.data.uniform_(-0.1, 0.1)
-        self.fc1.bias.data.fill_(0)
-        self.fc1.weight.data.uniform_(-0.1, 0.1)
-        
+
     def load_pretrained_embeddings(self, embeddings):
         """
         Loads embedding layer with pre-trained embeddings.
-
         :param embeddings: pre-trained embeddings
         """
         self.embedding.weight = nn.Parameter(embeddings)
@@ -144,7 +136,6 @@ class DecoderWithAttention(nn.Module):
     def fine_tune_embeddings(self, fine_tune=True):
         """
         Allow fine-tuning of embedding layer? (Only makes sense to not-allow if using pre-trained embeddings).
-
         :param fine_tune: Allow?
         """
         for p in self.embedding.parameters():
@@ -153,7 +144,6 @@ class DecoderWithAttention(nn.Module):
     def init_hidden_state(self, encoder_out):
         """
         Creates the initial hidden and cell states for the decoder's LSTM based on the encoded images.
-
         :param encoder_out: encoded images, a tensor of dimension (batch_size, num_pixels, encoder_dim)
         :return: hidden state, cell state
         """
@@ -165,7 +155,6 @@ class DecoderWithAttention(nn.Module):
     def forward(self, encoder_out, encoded_captions, caption_lengths):
         """
         Forward propagation.
-
         :param encoder_out: encoded images, a tensor of dimension (batch_size, enc_image_size, enc_image_size, encoder_dim)
         :param encoded_captions: encoded captions, a tensor of dimension (batch_size, max_caption_length)
         :param caption_lengths: caption lengths, a tensor of dimension (batch_size, 1)
@@ -184,47 +173,24 @@ class DecoderWithAttention(nn.Module):
         caption_lengths, sort_ind = caption_lengths.squeeze(1).sort(dim=0, descending=True)
         encoder_out = encoder_out[sort_ind]
         encoded_captions = encoded_captions[sort_ind]
-        
-        np_encoded_captions_reverse = np.flip(encoded_captions.cpu().numpy(),1).copy()
-        encoded_captions_reverse = torch.zeros_like(encoded_captions).to(device)
-        decode_lengths = caption_lengths.tolist()
-        for i,item in enumerate(encoded_captions_reverse):
-            encoded_captions_reverse[i][0:decode_lengths[i]] = torch.from_numpy(np_encoded_captions_reverse[i][-decode_lengths[i]:])
-        
+
         # Embedding
-        embeddings_forward = self.embedding(encoded_captions)  # (batch_size, max_caption_length, embed_dim)
-        embeddings_reverse = self.embedding(encoded_captions_reverse)
+        embeddings = self.embedding(encoded_captions)  # (batch_size, max_caption_length, embed_dim)
+
         # Initialize LSTM state
         h, c = self.init_hidden_state(encoder_out)  # (batch_size, decoder_dim)
-        h_reverse, c_reverse = self.init_hidden_state(encoder_out)
+
         # We won't decode at the <end> position, since we've finished generating as soon as we generate <end>
         # So, decoding lengths are actual lengths - 1
         decode_lengths = (caption_lengths - 1).tolist()
 
         # Create tensors to hold word predicion scores and alphas
         predictions = torch.zeros(batch_size, max(decode_lengths), vocab_size).to(device)
-        predictions_forward = torch.zeros(batch_size, max(decode_lengths), vocab_size).to(device)
-        predictions_reverse = torch.zeros(batch_size, max(decode_lengths), vocab_size).to(device)
         alphas = torch.zeros(batch_size, max(decode_lengths), num_pixels).to(device)
+
         # At each time-step, decode by
         # attention-weighing the encoder's output based on the decoder's previous hidden state output
         # then generate a new word in the decoder with the previous word and the attention weighted encoding
-        h_reverse_list = []
-        h_list = []
-        for t in range(max(decode_lengths)):
-            batch_size_t = sum([l > t for l in decode_lengths])
-            attention_weighted_encoding, alpha = self.attention(encoder_out[:batch_size_t],
-                                                                h_reverse[:batch_size_t])
-            gate = self.sigmoid(self.f_beta(h_reverse[:batch_size_t]))  # gating scalar, (batch_size_t, encoder_dim)
-            attention_weighted_encoding = gate * attention_weighted_encoding
-            h_reverse, c_reverse = self.decode_step(
-                torch.cat([embeddings_reverse[:batch_size_t, t, :], attention_weighted_encoding], dim=1),
-                (h_reverse[:batch_size_t], c_reverse[:batch_size_t]))  # (batch_size_t, decoder_dim)
-            h_reverse_list.append(h_reverse)
-            preds = self.fc1(self.dropout(h_reverse))  # (batch_size_t, vocab_size)
-            predictions_reverse[:batch_size_t, t, :] = preds
-        
-        
         for t in range(max(decode_lengths)):
             batch_size_t = sum([l > t for l in decode_lengths])
             attention_weighted_encoding, alpha = self.attention(encoder_out[:batch_size_t],
@@ -232,34 +198,10 @@ class DecoderWithAttention(nn.Module):
             gate = self.sigmoid(self.f_beta(h[:batch_size_t]))  # gating scalar, (batch_size_t, encoder_dim)
             attention_weighted_encoding = gate * attention_weighted_encoding
             h, c = self.decode_step(
-                torch.cat([embeddings_forward[:batch_size_t, t, :], attention_weighted_encoding], dim=1),
+                torch.cat([embeddings[:batch_size_t, t, :], attention_weighted_encoding], dim=1),
                 (h[:batch_size_t], c[:batch_size_t]))  # (batch_size_t, decoder_dim)
-            h_list.append(h)
-            preds = self.fc1(self.dropout(h))  # (batch_size_t, vocab_size)
-            predictions_forward[:batch_size_t, t, :] = preds
+            preds = self.fc(self.dropout(h))  # (batch_size_t, vocab_size)
+            predictions[:batch_size_t, t, :] = preds
             alphas[:batch_size_t, t, :] = alpha
 
-
-        i = 0
-        m = []
-        h_final = []
-        for t in range(max(decode_lengths)):
-            while (i < len(h_list[t])):
-                #print("t=" + str(t) + "\n")
-                #print("i=" + str(i) + "\n")
-                #print("decode length" + str(decode_lengths[i]) + "\n")
-                #print("length h_list[t]= " + str(len(h_list[t])))
-                #print("size h_list_t_i",str(h_list[t][i].size()))
-                #print("size h_reverse_t_i", str(h_reverse_list[decode_lengths[i] - 1 - t][i].size()))
-                m.append(torch.cat((h_list[t][i],h_reverse_list[decode_lengths[i] - 1 - t][i]),dim = 0)) 
-                #print("size h_list_t_i",str(h_list[t][i].size()))
-                i = i + 1
-            h_final.append(torch.stack(m))
-            m = []
-            i = 0
-        for t in range(max(decode_lengths)):
-            batch_size_t = sum([l > t for l in decode_lengths])
-            preds = self.fc(self.dropout(h_final[t]))  # (batch_size_t, vocab_size)
-            predictions[:batch_size_t, t, :] = preds
-            
-        return predictions, predictions_forward,predictions_reverse, encoded_captions, encoded_captions_reverse,decode_lengths, alphas, sort_ind
+        return predictions, encoded_captions, decode_lengths, alphas, sort_ind
