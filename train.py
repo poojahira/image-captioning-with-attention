@@ -11,7 +11,7 @@ from utils import *
 from nltk.translate.bleu_score import corpus_bleu
 
 # Data parameters
-data_folder = 'final_dataset'  # folder with data files saved by create_input_files.py
+data_folder = '/media/ssd/caption data'  # folder with data files saved by create_input_files.py
 data_name = 'coco_5_cap_per_img_5_min_word_freq'  # base name shared by data files
 
 # Model parameters
@@ -138,7 +138,6 @@ def main():
 def train(train_loader, encoder, decoder, criterion, encoder_optimizer, decoder_optimizer, epoch):
     """
     Performs one epoch's training.
-
     :param train_loader: DataLoader for training data
     :param encoder: encoder model
     :param decoder: decoder model
@@ -169,24 +168,18 @@ def train(train_loader, encoder, decoder, criterion, encoder_optimizer, decoder_
 
         # Forward prop.
         imgs = encoder(imgs)
-        scores, pred_f,pred_r,caps_sorted, caps_reverse,decode_lengths, alphas, sort_ind = decoder(imgs, caps, caplens)
+        scores, caps_sorted, decode_lengths, alphas, sort_ind = decoder(imgs, caps, caplens)
 
         # Since we decoded starting with <start>, the targets are all words after <start>, up to <end>
         targets = caps_sorted[:, 1:]
-        targets_reverse = caps_reverse[:, 1:]
 
         # Remove timesteps that we didn't decode at, or are pads
         # pack_padded_sequence is an easy trick to do this
         scores, _ = pack_padded_sequence(scores, decode_lengths, batch_first=True)
-        pred_f, _ = pack_padded_sequence(pred_f, decode_lengths, batch_first=True)
-        pred_r, _ = pack_padded_sequence(pred_r, decode_lengths, batch_first=True)
         targets, _ = pack_padded_sequence(targets, decode_lengths, batch_first=True)
-        targets_reverse, _ = pack_padded_sequence(targets_reverse, decode_lengths, batch_first=True)
 
         # Calculate loss
         loss = criterion(scores, targets)
-        loss += criterion(pred_f, targets)
-        loss += criterion(pred_r, targets_reverse) 
 
         # Add doubly stochastic attention regularization
         loss += alpha_c * ((1. - alphas.sum(dim=1)) ** 2).mean()
@@ -231,7 +224,6 @@ def train(train_loader, encoder, decoder, criterion, encoder_optimizer, decoder_
 def validate(val_loader, encoder, decoder, criterion):
     """
     Performs one epoch's validation.
-
     :param val_loader: DataLoader for validation data.
     :param encoder: encoder model
     :param decoder: decoder model
